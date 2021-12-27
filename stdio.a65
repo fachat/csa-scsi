@@ -1,0 +1,68 @@
+
+	.(
+	.zero
+d1      .word 0
+        .text
+
+&Crlfout   lda #13
+          jsr PUTC
+&Lfout     lda #10
+&Putc      jmp PUTC
+
+
+&Txtout    .(
+          sta d1
+          sty d1+1
+          ldy #0
+tol       lda (d1),y
+          beq tole
+          jsr PUTC
+          iny
+          bne tol
+          inc d1+1
+          bne tol
+tole
+          clc
+          rts
+          .)
+
+&Dezbout   .(
+l1        tay
+          sec
+          sbc #100
+          bcs l1
+          lda #0
+          sta d1
+          tya
+l2        tay
+          sec
+          sbc #10
+          bcc l3
+          inc d1
+          bcs l2
+l3        asl d1
+          asl d1
+          asl d1
+          asl d1
+          tya
+          ora d1
+&&Hexout
+          pha
+          lsr
+          lsr
+          lsr
+          lsr
+          jsr nibout
+          pla
+          and #$0f
+nibout    clc
+          adc #"0"
+          cmp #"9"+1
+          bcc nibok
+          adc #6
+nibok     jmp PUTC
+          .)
+
+	.)
+
+

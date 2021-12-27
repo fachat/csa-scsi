@@ -1,0 +1,29 @@
+
+/*
+ * tests the CS/A65 "SCSI" board
+ * in a PETCPU system
+ */
+
+#include "petbind.a65"
+
+#define SCSIBASE	$e870
+
+/*#define	DEBUG*/
+#define	PRINT
+/*#define	PRINT2*/
+
+#include "csascsi1.a65"
+#include "pcpart.a65"
+#include "paccess.a65"
+
+PRG	lda #<buf
+	ldy #>buf
+	ldx #2
+	jsr scanpart
+	rts
+
+DLOOP 	rts
+
+	.bss
+buf	.dsb 512
+
