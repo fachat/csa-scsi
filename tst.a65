@@ -24,15 +24,28 @@ PRG	lda #<buf
 	lda #250
 	sta cnt
 
-	lda #<buf
-	ldy #>buf
-	ldx #3
-	jsr start
 loop
+	ldy #0
+ll	tya
+	sta buf,y
+	iny
+	bne ll
+
+	lda #0
+	sta lba
+	sta lba+1
+	sta lba+2
+	sta lba+3
+
+	sta nsec
+	lda #16
+	sta nsec+1	; read 16 blocks
+
 	lda #<buf
 	ldy #>buf
 	ldx #3
-	jsr getsize
+	jsr readblock
+	;jsr getsize
 	;jsr inquire
 	;jsr getluns
 
