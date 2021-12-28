@@ -1,0 +1,55 @@
+
+/*
+ * tests the device 3 
+ * in a PETCPU system
+ */
+
+#include "petbind.a65"
+
+#define SCSIBASE	$e870
+
+#define	DEBUG
+#define	PRINT
+#define	PRINT2
+
+#include "csascsi1.a65"
+#include "pcpart.a65"
+#include "paccess.a65"
+
+
+PRG	lda #<buf
+	ldy #>buf
+	jsr initscsi
+
+	lda #250
+	sta cnt
+
+	lda #<buf
+	ldy #>buf
+	ldx #3
+	jsr start
+loop
+	lda #<buf
+	ldy #>buf
+	ldx #3
+	jsr getsize
+	;jsr inquire
+	;jsr getluns
+
+	
+	jsr Crlfout
+	dec cnt
+
+	ldx #0
+dx	dex
+	bne dx
+
+;	bne loop
+	rts
+
+DLOOP 	rts
+
+	.bss
+cnt	.byt 0
+buf	.dsb 512
+

@@ -283,13 +283,26 @@ error2	jmp error
 task16out
 	ldy #16
 	.byt $2c
+task12out
+	ldy #12
+	.byt $2c
 taskAout
 	ldy #10
 	.byt $2c
 taskout	ldy #6		; byte count
 	cmp #2		; check for illegal code
-	beq error
+	beq error2
 	sta task	; store command in table
+#ifdef DEBUG
+	tya
+	tax
+	dex
+pl	lda task,x
+	jsr Hexout
+	dex
+	bpl pl
+#endif
+
 	ldx #0
 t1	jsr reqwait	; wait for request from device
 	lda task,x
@@ -297,21 +310,36 @@ t1	jsr reqwait	; wait for request from device
 	inx
 	dey
 	bne t1
+	lc(">")
 	rts
 
 ; getstat retrieves the status byte and the null byte from the device
 ; at the end of a command. AC is returned with a non-zero value if
 ; an error has occured.
 
-getstat	jsr reqwait
+gsst	
+#ifdef DEBUG
+	lda #"S"
+	jsr PUTC
+#endif
+	lda DATA
+	tay		; status to YR
+#ifdef DEBUG
+	jsr Hexout
+	; fall-through
+#endif
+	.byt $2c
+
+getstat	ldy #0
+gstat	jsr reqwait
 	lda STATUS
 	and #S_PHASEMASK
 	beq gsend
+	cmp #S_STATUS
+	beq gsst
 #ifdef DEBUG
 	cmp #S_DATAIN
 	beq gsdatin
-	cmp #S_STATUS
-	beq gsst
 	cmp #S_MSGIN
 	beq gsmsgin
 	pha
@@ -322,24 +350,24 @@ getstat	jsr reqwait
 	jmp gsget
 gsdatin	lda #"D"
 	.byt $2c
-gsst	lda #"S"
-	.byt $2c
 gsmsgin	lda #"M"
 	jsr PUTC
 gsget
 #endif
-;	jsr reqwait
 	lda DATA
-	tay
 #ifdef DEBUG
 	jsr Hexout
 #endif
-	jmp getstat
+	jmp gstat
 gsend	
+	lda #0
+	sta CTRL
 	cli
 #ifdef DEBUG
 	lda #"-"
 	jsr PUTC
+	tya
+	jsr Hexout
 	jsr Crlfout
 #endif
 	tya
@@ -501,13 +529,18 @@ rd	jsr wait75us
 
 ; scan SCSI bus for devices
 
-	jsr clrtask
 	lda #0
 	sta actdev	; start with first device
 iniloop
+	jsr clrtask
 	lda actdev
 	cmp #MYID
-	beq nodev
+	bne okdev
+	jmp nodev
+okdev
+	tay
+	lda #0
+	sta devtype,y
 
 	jsr selcntr
 	bcs iselerr
@@ -519,7 +552,7 @@ iniloop
 	log(1)
 	hout(actdev)
 	crlf()
-	jmp next
+	jmp handle_not_ready
 
 iselerr	cli
 	log(4)
@@ -545,11 +578,15 @@ iniok	log(3)
 	
 #ifdef PRINT
 	and #$7f
-	cmp #5		; CDROM
-	beq print
+	;cmp #5		; CDROM
+	;beq print
 	cmp #0		; DISK 
 	bne next
 print	
+	lda dp
+	ldy dp+1
+	ldx actdev
+	jsr start
 	lda dp
 	ldy dp+1
 	ldx actdev
@@ -560,8 +597,9 @@ next
 	inc actdev
 	lda actdev
 	cmp #8
-	bcc iniloop
-
+	bcs iniend
+	jmp iniloop
+iniend
 	lda #<devtype
 	ldy #>devtype
 	ldx #8
@@ -580,6 +618,50 @@ selerr	cli
 	sec
 	rts
 
+handle_not_ready
+	jsr reqsense
+	bcs next
+	ldy #0
+	lda (dp),y
+	cmp #$70
+	bne next
+	ldy #2
+	lda (dp),y
+	cmp #$06	; sense key = UNIT ATTENTION
+	beq attn
+	cmp #$02	; Sense key = NOT READY
+	bne next
+	ldy #12
+	lda (dp),y
+	cmp #$04	; add. sense code = LUN NOT READY
+	bne next
+	iny
+	lda (dp),y
+	cmp #$01	; add. sense qualifier = becoming ready
+	beq nrdy_wait
+	cmp #$02	; add. sense qualifier = START UNIT required
+	bne next
+	; START UNIT
+	lda dp
+	ldy dp+1
+	ldx actdev
+	jsr start
+nrdy_wait
+	ldx #0
+nrl	inx
+	bne nrl
+	jmp iniloop
+
+attn	ldy #12
+	lda (dp),y
+	cmp #$29
+	bne next
+	iny
+	lda (dp),y
+	cmp #$02	; SCSI Bus Reset Occured
+	bne next
+	beq nrdy_wait
+
 /*************************************************************************
  * Inquire device status/info into buffer (addr=a/y)
  */
@@ -594,8 +676,8 @@ selerr	cli
 	jsr clrtask
 sel2	jsr selcntr
 &selerr2 bcs selerr
-	lda #<-1
-	sta task+4
+	lda #<-1	; 255 byte
+	sta task+4	; allocation length
 	lda #$12
 	jsr taskout
 
@@ -648,6 +730,38 @@ inrts
 
 
 /*************************************************************************
+ * REQUEST SENSE
+ * reads out error information from the drive
+ * after a "CHECK CONDITION" error set in the status bit
+ * assumes dp and actdev already set
+ */
+
+reqsense .(
+	lc("s")
+	jsr clrtask
+	lda #255
+	sta task+4	; allocation length
+	jsr selcntr
+	bcs rqselerr
+	lda #$03
+	jsr taskout
+	ldy #0
+rql	jsr reqwait
+	bmi rqdone
+	lda DATA
+	sta (dp),y
+#ifdef DEBUG
+	jsr Hexout
+#endif
+	iny
+	bne rql
+rqdone	jmp getstat
+&rqselerr
+	jmp selerr
+	.)
+
+
+/*************************************************************************
  * Get Medium capacity, a/y = buffer
  * returns 4 byte # of blocks (hi-low format) + 4 byte byte/block in 
  * buffer
@@ -658,11 +772,11 @@ inrts
 	sty dp+1
 	stx actdev
 	lc("g")
-jmp xx
+;jmp xx
 	jsr clrtask
 	jsr selcntr
 selerr2x
-	bcs selerr2
+	bcs rqselerr
 	lda #$25
 	jsr taskAout
 	ldy #0
@@ -673,8 +787,8 @@ gsl	jsr reqwait
 	iny
 	bne gsl
 gsdone	
-	tya
-	beq gs2
+	;tya
+	;beq gs2
 #ifdef DEBUG
 	lc("G")
 	tya
@@ -682,9 +796,11 @@ gsdone
 #endif
 gsx	jsr getstat
 	bcc gsrts
+	jsr reqsense
 	jmp error
 gsrts	rts
 
+#if 1
 gs2	jsr getstat
 	nop
 xx	jsr clrtask
@@ -710,7 +826,154 @@ gsdone2
 	jsr Hexout
 #endif
 	jmp gsx
+#endif
 	.)
+
+/*************************************************************************
+ * MODE SELECT
+ */
+&getmode .(
+	sta dp
+	sty dp+1
+	stx actdev
+	lc("m")
+	
+	jsr clrtask
+	lda #255
+	sta task+4	; allocation len
+	jsr selcntr
+	bcs smselerr
+
+	lda #$1a
+	jsr taskout
+	ldy #0
+rql	jsr reqwait
+	bmi done
+	lda DATA
+	sta (dp),y
+#ifdef DEBUG
+	jsr Hexout
+#endif
+	iny
+	bne rql
+done	jsr getstat
+	bcc ok
+	jsr reqsense
+ok	rts
+smselerr
+	jmp selerr
+	.)
+
+/*************************************************************************
+ * GET LUNs
+ */
+
+&getluns .(
+	sta dp
+	sty dp+1
+	stx actdev
+	lc("l")
+	
+	jsr clrtask
+	lda #255
+	sta task+9	; allocation len
+	jsr selcntr
+	bcs glselerr
+
+	lda #$a0
+	jsr task12out
+	ldy #0
+rql	jsr reqwait
+	bmi done
+	lda DATA
+	sta (dp),y
+#ifdef DEBUG
+	jsr Hexout
+#endif
+	iny
+	bne rql
+done	jsr getstat
+	bcc ok
+	jsr reqsense
+ok	rts
+glselerr
+	jmp selerr
+	.)
+
+/*************************************************************************
+ * FORMAT
+ */
+
+&format .(
+	sta dp
+	sty dp+1
+	stx actdev
+	lc("f")
+	
+	jsr clrtask
+	jsr selcntr
+	bcs glselerr
+
+	lda #$04
+	jsr taskout
+	ldy #0
+rql	jsr reqwait
+	bmi done
+	lda DATA
+	sta (dp),y
+#ifdef DEBUG
+	jsr Hexout
+#endif
+	iny
+	bne rql
+done	jsr getstat
+	bcc ok
+	jsr reqsense
+ok	rts
+glselerr
+	jmp selerr
+	.)
+
+/*************************************************************************
+ * START STOP UNIT
+ */
+
+&stop	clc
+	.byt $24
+&start 	sec
+	.(
+	sta dp
+	sty dp+1
+	stx actdev
+	php
+	lc("t")
+	
+	jsr clrtask
+	plp
+	rol task+4	; start bit is D0
+	jsr selcntr
+	bcs glselerr
+
+	lda #$1b
+	jsr taskout
+	ldy #0
+rql	jsr reqwait
+	bmi done
+	lda DATA
+	sta (dp),y
+#ifdef DEBUG
+	jsr Hexout
+#endif
+	iny
+	bne rql
+done	jsr getstat
+	bcc ok
+	jsr reqsense
+ok	rts
+glselerr
+	jmp selerr
+	.)
+
 
 /*************************************************************************
  * Print data subroutines
