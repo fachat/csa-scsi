@@ -98,6 +98,7 @@ next2	jmp next
 scandev	lda devtype,x
 	cmp #<-1
 	beq next2	; not found then next device
+	and #$7f 	; mask ATN bit
 
 	cmp #0		; direct access
 	bne next2	; no then next device
